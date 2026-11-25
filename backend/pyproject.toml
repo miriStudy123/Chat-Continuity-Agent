@@ -1,0 +1,12 @@
+[project]
+name = "chat-continuity-agent"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "langgraph",
+    "langgraph-checkpoint-sqlite",
+    "python-dotenv",
+    "google-genai",
+    "langsmith",
+    "uvicorn",
+]

@@ -1,0 +1,207 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Synthetic virtualized ChatGPT thread (test fixture)</title>
+<!--
+  Test fixture for extension/tests/chatgpt-browser.test.js. Run in headless
+  Chrome. It reproduces the behaviour observed on chatgpt.com (2026-11-25):
+  - about six turns exist in the DOM at any time; each turn
+    ([data-turn-key]) holds one user bubble and one assistant response body;
+  - turns leaving the viewport are removed entirely and re-rendered
+    asynchronously after a scroll event, like a React virtualizer;
+  - a sidebar contains text that must never be collected.
+  Query parameters: mode=inner|document|prepend, turns=<n>, abortAfterMs=<n>,
+  turnHeight=<px> (tall turns), sticky=1 (the page pulls the scroll back to
+  the bottom after every programmatic scroll, like a "stick to bottom" chat).
+  All content is synthetic.
+-->
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  nav { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; overflow: auto; }
+  .thread-scroll-container {
+    position: fixed; left: 220px; right: 0; top: 0; height: 700px; overflow-y: auto;
+  }
+  body.document-scroll .thread-scroll-container {
+    position: static; height: auto; overflow: visible; margin-left: 220px;
+  }
+  .turn { box-sizing: border-box; border-bottom: 1px solid #ccc; overflow: hidden; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0);
+  }
+  #out { display: none; }
+</style>
+<body>
+  <nav>
+    <a>SIDEBAR conversation title</a>
+    <div class="bg-user-message">SIDEBAR bubble-like element</div>
+  </nav>
+  <div class="thread-scroll-container">
+    <main>
+      <div data-thread-reading>
+        <div id="top-spacer"></div>
+        <div id="turns"></div>
+        <div id="bottom-spacer"></div>
+      </div>
+    </main>
+  </div>
+  <pre id="out">pending</pre>
+
+  <script>
+    // Minimal chrome.* stub for the content scripts.
+    window.chrome = {
+      runtime: {
+        id: "fixture",
+        onMessage: { addListener() {} },
+        onConnect: { addListener() {} },
+      },
+    };
+
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("mode") || "inner";
+    const TOTAL = Number(params.get("turns") || 60);
+    const TURN_HEIGHT = Number(params.get("turnHeight") || 300);
+    const sticky = params.get("sticky") === "1";
+    const scrollPositions = []; // every scroll position, in order
+    const BUFFER = 1;
+    if (mode === "document") document.body.classList.add("document-scroll");
+    const scroller =
+      mode === "document"
+        ? document.scrollingElement
+        : document.querySelector(".thread-scroll-container");
+    const scrollEventTarget = mode === "document" ? window : scroller;
+    const topSpacer = document.getElementById("top-spacer");
+    const bottomSpacer = document.getElementById("bottom-spacer");
+    const turnsBox = document.getElementById("turns");
+    let first = mode === "prepend" ? TOTAL - 15 : 0; // known turns: [first, TOTAL)
+    let loadingOlder = false;
+    const liveTurns = new Map(); // absolute turn index -> rendered node
+
+    // Stable, unique, opaque turn keys (like ChatGPT's).
+    const turnKey = (index) =>
+      `t-${((index + 1) * 2654435761 % 4294967296).toString(16)}-${index}`;
+
+    function turnNode(index) {
+      const turn = document.createElement("div");
+      turn.className = "turn";
+      turn.style.height = `${TURN_HEIGHT}px`;
+      turn.setAttribute("data-turn-key", turnKey(index));
+      turn.innerHTML = `
+        <div class="group/user-message">
+          <span class="sr-only">You said:</span>
+          <div class="bg-user-message text-user-message"><div>USER-${index} שאלה ${index}</div></div>
+          <button aria-label="Edit">EDIT</button>
+        </div>
+        <div data-content-search-unit-key="u${index}" data-chatgpt-search-unit-key="u${index}">
+          <div data-response-body><p>ASSISTANT-${index} תשובה ${index}</p><pre><code>code ${index}</code></pre></div>
+        </div>
+        <button>COPY</button>`;
+      return turn;
+    }
+
+    const threadOffset = () =>
+      mode === "document"
+        ? document.querySelector("[data-thread-reading]").getBoundingClientRect().top + scrollY
+        : 0;
+
+    function render() {
+      const viewTop = scroller.scrollTop - threadOffset();
+      const viewHeight = scroller.clientHeight;
+      const known = TOTAL - first;
+      const start = Math.max(0, Math.floor(viewTop / TURN_HEIGHT) - BUFFER);
+      const end = Math.min(known, Math.ceil((viewTop + viewHeight) / TURN_HEIGHT) + BUFFER);
+      topSpacer.style.height = `${start * TURN_HEIGHT}px`;
+      bottomSpacer.style.height = `${(known - end) * TURN_HEIGHT}px`;
+      // Keyed reconciliation like React: turns that stay in the window keep
+      // their DOM node; only turns entering or leaving are added/removed.
+      const wanted = [];
+      for (let offset = start; offset < end; offset += 1) wanted.push(first + offset);
+      for (const [index, node] of liveTurns) {
+        if (!wanted.includes(index)) {
+          node.remove();
+          liveTurns.delete(index);
+        }
+      }
+      let previous = null;
+      for (const index of wanted) {
+        let node = liveTurns.get(index);
+        if (!node) {
+          node = turnNode(index);
+          liveTurns.set(index, node);
+        }
+        const expectedPosition = previous ? previous.nextSibling : turnsBox.firstChild;
+        if (node !== expectedPosition) turnsBox.insertBefore(node, expectedPosition);
+        previous = node;
+      }
+
+      if (mode === "prepend" && viewTop < 50 && first > 0 && !loadingOlder) {
+        loadingOlder = true;
+        setTimeout(() => {
+          const added = Math.min(15, first);
+          first -= added;
+          loadingOlder = false;
+          scroller.scrollTop += added * TURN_HEIGHT; // keep the visible position
+          render();
+        }, 400);
+      }
+    }
+
+    let renderTimer;
+    let stickTimer;
+    let collecting = false;
+    scrollEventTarget.addEventListener("scroll", () => {
+      if (collecting) scrollPositions.push(Math.round(scroller.scrollTop));
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(render, 40);
+      if (sticky && collecting) {
+        // Pull the view back to the bottom shortly after any scroll.
+        clearTimeout(stickTimer);
+        stickTimer = setTimeout(() => {
+          if (collecting) scroller.scrollTop = scroller.scrollHeight;
+        }, 150);
+      }
+    });
+    render();
+    scroller.scrollTop = scroller.scrollHeight; // ChatGPT opens at the bottom
+    render();
+  </script>
+  <script src="../../content/shared.js"></script>
+  <script src="../../content/chatgpt.js"></script>
+  <script>
+    setTimeout(async () => {
+      const out = document.getElementById("out");
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const visible = await window.ChatContinuityExtractors.chatgpt();
+        const domTurnsAtBottom = document.querySelectorAll("[data-turn-key]").length;
+        const originalTop = scroller.scrollTop;
+        const abortAfterMs = Number(params.get("abortAfterMs") || 0);
+        const progress = [];
+        const startedAt = Date.now();
+        collecting = true;
+        const full = await window.ChatContinuityChatGPTFullCollection({
+          isAborted: () => abortAfterMs > 0 && Date.now() - startedAt > abortAfterMs,
+          onProgress: (collected, percent) => progress.push({ collected, percent }),
+        });
+        const elapsedMs = Date.now() - startedAt;
+        // Let any pending scroll event of the final restore arrive.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        collecting = false;
+        out.textContent = "RESULT=" + JSON.stringify({
+          mode,
+          totalTurns: TOTAL,
+          domTurnsAtBottom,
+          visibleCount: visible.messages.length,
+          visibleWarning: visible.warning,
+          originalTop,
+          finalTop: scroller.scrollTop,
+          maxTop: scroller.scrollHeight - scroller.clientHeight,
+          elapsedMs,
+          scrollPositions,
+          progress,
+          full,
+        });
+      } catch (error) {
+        out.textContent = "RESULT=" + JSON.stringify({ error: String(error && error.stack || error) });
+      }
+    }, 500);
+  </script>
+</body>

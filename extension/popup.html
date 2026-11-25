@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chat Continuity Agent</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>שמירת התקדמות והמשך</h1>
+      <p id="platform" class="platform">בודקת את האתר הפתוח…</p>
+      <p id="status" role="status" aria-live="polite"></p>
+
+      <section id="privacy">
+        <p>
+          האיסוף קורא רק הודעות המוצגות בשיחה הפתוחה. ייתכן שחלק מההיסטוריה לא
+          נטען; האיסוף הרגיל אינו גולל.
+        </p>
+        <p id="full-collection-note" hidden>
+          ב־ChatGPT אפשר לבחור "איסוף שיחה מלאה": התוסף גולל את השיחה מתחילתה
+          ועד סופה, אוסף את כל ההודעות ומחזיר את הגלילה למקומה. השאירי את החלון
+          פתוח עד לסיום; סגירתו עוצרת את האיסוף.
+        </p>
+        <p>
+          לפני שליחה תתבקשי לאשר העברת השיחה לשרת המקומי. השרת יעביר את תוכנה
+          ל־Gemini API לצורך הניתוח.
+        </p>
+      </section>
+
+      <button id="collect" type="button" disabled>איסוף השיחה</button>
+      <button id="collect-full" class="secondary" type="button" hidden>
+        איסוף שיחה מלאה (גלילה אוטומטית)
+      </button>
+      <p id="collection-warning" class="warning" hidden></p>
+      <button id="send" type="button" hidden>אישור ושליחה לניתוח</button>
+      <button id="restore" type="button" hidden>ניסיון שחזור מחדש</button>
+
+      <section id="review" hidden>
+        <h2>סיכום ההתקדמות</h2>
+        <pre id="summary"></pre>
+        <h2>פרומפט להמשך</h2>
+        <pre id="prompt"></pre>
+        <div id="approval-actions">
+          <button id="approve" type="button">אישור ושמירה</button>
+          <button id="reject" class="secondary" type="button">דחייה</button>
+        </div>
+        <button id="copy" type="button" hidden>העתקת הפרומפט</button>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

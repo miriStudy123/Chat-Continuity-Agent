@@ -1,0 +1,6 @@
+/backend/.env
+/backend/projects.db
+/backend/projects.db-*
+.venv/
+__pycache__/
+*.pyc
