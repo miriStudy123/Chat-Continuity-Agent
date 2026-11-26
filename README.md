@@ -73,13 +73,12 @@ How it works:
 *The popup on a ChatGPT conversation: the regular collection and, on ChatGPT
 only, full collection with automatic scrolling.*
 
-**Working run in the browser (2026-11-26).** A real ChatGPT conversation was
-collected (4 messages), sent to the local server and analyzed by Gemini; the
-popup then shows the review before approval:
+**Working run in the browser (2026-11-26).** A real Claude conversation was
+collected, sent to the local server and analyzed by Gemini. The popup was
+then reopened and restored the pending review ("נמצאה סקירה שממתינה לאישור"),
+showing the project summary and the continuation prompt before approval:
 
-![Analysis completed: the popup shows the collected message count and the summary](docs/screenshots/popup-analysis-completed.png)
-
-![The review: project summary and continuation prompt, with the approve button](docs/screenshots/popup-summary-and-prompt.png)
+![The popup on Claude: restored review with the project summary and the continuation prompt](docs/screenshots/popup-claude-review.png)
 
 *The extracted values keep the conversation's language (Hebrew); the labels
 of the summary template are in English.*
@@ -302,10 +301,10 @@ Verified: the backend over real HTTP with a real Gemini analysis
 approve → saved); the full HTTP flow with a fake Gemini client; the LangSmith
 datasets and experiments above; ChatGPT collection on the live site; ChatGPT
 full collection on the synthetic test page; the installed extension in Chrome
-on a real ChatGPT conversation: collection → send → Gemini analysis (with the
-fallback model available) → review shown in the popup (screenshots above); the
-Gemini fallback against the real API (main model returned 503, the backup
-completed the analysis); collection on a live Claude conversation (4 messages).
+on real ChatGPT and Claude conversations: collection → send → Gemini analysis
+→ review shown in the popup, including restoring the review after the popup
+was reopened (screenshot above, Claude); the Gemini fallback against the real
+API (main model returned 503, the backup completed the analysis).
 
 Not yet verified: approving and saving from the browser (the backend part is
 verified over HTTP); ChatGPT full collection on a real long conversation;
