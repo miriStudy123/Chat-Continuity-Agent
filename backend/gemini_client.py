@@ -6,7 +6,10 @@ from google import genai
 from google.genai import types
 
 
-GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
+# Tried in order only when the model before it is overloaded or unavailable
+# (HTTP 500/502/503/504 after its own retries). Other errors are not retried.
+GEMINI_FALLBACK_MODELS = ["gemini-3.1-flash-lite"]
 
 # Without these options the SDK waits forever and never retries.
 # Timeout is per HTTP attempt, in milliseconds.

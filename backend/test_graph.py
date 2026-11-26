@@ -384,6 +384,92 @@ class ReliabilityAndOriginTests(unittest.TestCase):
         self.assertIn(503, options.retry_options.http_status_codes)
 
 
+class ScriptedModels:
+    """Fake Gemini models: per model name, an exception to raise or a result."""
+
+    def __init__(self, outcomes: dict):
+        self.outcomes = outcomes
+        self.called = []
+
+    def generate_content(self, **kwargs):
+        self.called.append(kwargs["model"])
+        outcome = self.outcomes[kwargs["model"]]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(text=json.dumps(outcome))
+
+
+class GeminiFallbackTests(unittest.TestCase):
+    MAIN = "main-model"
+    BACKUP = "backup-model"
+
+    def analyze(self, outcomes: dict):
+        models = ScriptedModels(outcomes)
+        with (
+            patch.object(graph_module, "GEMINI_MODEL", self.MAIN),
+            patch.object(graph_module, "GEMINI_FALLBACK_MODELS", [self.BACKUP]),
+            patch.object(
+                graph_module,
+                "create_gemini_client",
+                return_value=SimpleNamespace(models=models),
+            ),
+        ):
+            try:
+                return graph_module.analyze_conversation_node(
+                    create_initial_state("Synthetic conversation")
+                ), models.called
+            except Exception as exc:
+                return exc, models.called
+
+    @staticmethod
+    def api_error(code: int):
+        from google.genai.errors import ClientError, ServerError
+
+        error_class = ServerError if code >= 500 else ClientError
+        return error_class(code, {"error": {"code": code, "status": "SYNTHETIC"}})
+
+    def test_overloaded_main_model_falls_back_to_backup(self):
+        result, called = self.analyze(
+            {self.MAIN: self.api_error(503), self.BACKUP: analysis_result()}
+        )
+        self.assertEqual(called, [self.MAIN, self.BACKUP])
+        self.assertEqual(result["project_goal"], "Synthetic goal")
+
+    def test_main_model_success_never_calls_backup(self):
+        result, called = self.analyze(
+            {self.MAIN: analysis_result(), self.BACKUP: self.api_error(503)}
+        )
+        self.assertEqual(called, [self.MAIN])
+        self.assertEqual(result["project_goal"], "Synthetic goal")
+
+    def test_non_overload_errors_do_not_fall_back(self):
+        for code, expected_text in ((429, "מכסת"), (403, "הרשאה")):
+            with self.subTest(code=code):
+                error, called = self.analyze(
+                    {self.MAIN: self.api_error(code), self.BACKUP: analysis_result()}
+                )
+                self.assertEqual(called, [self.MAIN])
+                self.assertIsInstance(error, graph_module.GeminiAnalysisError)
+                self.assertIn(expected_text, error.user_message)
+
+    def test_all_models_overloaded_reports_hebrew_503(self):
+        error, called = self.analyze(
+            {self.MAIN: self.api_error(503), self.BACKUP: self.api_error(503)}
+        )
+        self.assertEqual(called, [self.MAIN, self.BACKUP])
+        self.assertIsInstance(error, graph_module.GeminiAnalysisError)
+        self.assertEqual(error.status_code, 503)
+        self.assertIn("מודל הגיבוי", error.user_message)
+
+    def test_configured_fallback_is_a_different_gemini_model(self):
+        from backend import gemini_client
+
+        self.assertTrue(gemini_client.GEMINI_FALLBACK_MODELS)
+        self.assertNotIn(gemini_client.GEMINI_MODEL, gemini_client.GEMINI_FALLBACK_MODELS)
+        for model in gemini_client.GEMINI_FALLBACK_MODELS:
+            self.assertTrue(model.startswith("gemini-"))
+
+
 class ExtensionIdConfigurationTests(unittest.TestCase):
     def test_missing_id_uses_installed_extension_default(self):
         for value in (None, "", "   "):

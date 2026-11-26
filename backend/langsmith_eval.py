@@ -593,6 +593,9 @@ def main_gemini(model: str | None = None) -> None:
 
     if model:
         graph_module.GEMINI_MODEL = model
+    # Experiments must measure exactly the model recorded in their metadata,
+    # so the production fallback to another model is disabled here.
+    graph_module.GEMINI_FALLBACK_MODELS = []
     client = Client()
     dataset, example_count = _ensure_dataset(
         client,

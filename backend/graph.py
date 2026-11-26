@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Literal
 
 from google.genai.errors import APIError
@@ -8,9 +9,14 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from .app import validate_conversation_text
-from .gemini_client import GEMINI_MODEL, create_gemini_client
+from .gemini_client import GEMINI_FALLBACK_MODELS, GEMINI_MODEL, create_gemini_client
 from .state import ProjectState
 from .storage import save_approved_state
+
+# Shown in the uvicorn console, so the user can see which model answered.
+logger = logging.getLogger("uvicorn.error")
+# Gemini "overloaded/unavailable" responses that justify trying a fallback.
+_FALLBACK_STATUS_CODES = {500, 502, 503, 504}
 
 try:
     import httpx2 as _httpx2
@@ -92,7 +98,8 @@ def _gemini_error_from_api(exc: APIError) -> GeminiAnalysisError:
         )
     if isinstance(code, int) and code >= 500:
         return GeminiAnalysisError(
-            "Gemini עמוס או לא זמין כרגע (גם אחרי כמה ניסיונות חוזרים). "
+            "Gemini עמוס או לא זמין כרגע (גם המודל הראשי וגם מודל הגיבוי, "
+            "אחרי כמה ניסיונות חוזרים). "
             "נסי שוב בעוד כמה דקות.",
             503,
         )
@@ -172,12 +179,33 @@ Conversation:
     generation_config: dict = {"response_mime_type": "application/json"}
     if ANALYSIS_RESPONSE_SCHEMA is not None:
         generation_config["response_json_schema"] = ANALYSIS_RESPONSE_SCHEMA
+    # The main model first; a fallback model only if the one before it is
+    # overloaded or unavailable. Any other error is reported immediately.
+    models = [GEMINI_MODEL] + [
+        model for model in GEMINI_FALLBACK_MODELS if model != GEMINI_MODEL
+    ]
     try:
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=generation_config,
-        )
+        for index, model in enumerate(models):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=generation_config,
+                )
+            except APIError as exc:
+                is_last = index == len(models) - 1
+                if getattr(exc, "code", None) in _FALLBACK_STATUS_CODES and not is_last:
+                    logger.warning(
+                        "Gemini model %s is unavailable (HTTP %s); trying fallback %s",
+                        model,
+                        exc.code,
+                        models[index + 1],
+                    )
+                    continue
+                raise
+            if index > 0:
+                logger.warning("Gemini analysis completed with fallback model %s", model)
+            break
     except APIError as exc:
         raise _gemini_error_from_api(exc) from exc
     except _TIMEOUT_ERRORS as exc:

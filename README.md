@@ -73,6 +73,17 @@ How it works:
 *The popup on a ChatGPT conversation: the regular collection and, on ChatGPT
 only, full collection with automatic scrolling.*
 
+**Working run in the browser (2026-11-26).** A real ChatGPT conversation was
+collected (4 messages), sent to the local server and analyzed by Gemini; the
+popup then shows the review before approval:
+
+![Analysis completed: the popup shows the collected message count and the summary](docs/screenshots/popup-analysis-completed.png)
+
+![The review: project summary and continuation prompt, with the approve button](docs/screenshots/popup-summary-and-prompt.png)
+
+*The extracted values keep the conversation's language (Hebrew); the labels
+of the summary template are in English.*
+
 Extracted fields: `project_goal`, `important_context`, `decisions` (decision +
 reason), `technologies`, `files_and_components`, `completed_tasks`,
 `open_tasks`, `stopping_point`, `next_action`.
@@ -99,7 +110,7 @@ flowchart TD
 | Node | What it does |
 |---|---|
 | `validate_conversation` | Strips the transcript and rejects an empty one. |
-| `analyze_conversation` | Calls Gemini with a JSON schema for the nine fields. The prompt treats the conversation as data, forbids invented information and keeps the conversation's language. The response is validated field by field. |
+| `analyze_conversation` | Calls Gemini with a JSON schema for the nine fields. The prompt treats the conversation as data, forbids invented information and keeps the conversation's language. The response is validated field by field. If the main model is overloaded (HTTP 500/502/503/504), it falls back to a backup Gemini model. |
 | `check_analysis_quality` | Increments `analysis_attempts`; sets `quality_passed` only if `project_goal`, `stopping_point` and `next_action` are filled, otherwise records the missing fields in `quality_feedback`. |
 | `prepare_review` | Builds the `summary` and the `continuation_prompt`. |
 | `request_human_approval` | Pauses the graph with `interrupt()` and returns the summary and prompt for review. |
@@ -151,9 +162,14 @@ Measured results (2026-11-25):
 | `CCA-gemini-before-structured-output-95e8c1d2` | Gemini (`gemini-3.5-flash`), before | all 6 metrics 1.000, 0 failed runs |
 | `CCA-gemini-after-structured-output-b3c733fe` | Gemini (`gemini-3.5-flash`), after | all 6 metrics 1.000, 0 failed runs |
 
-The Gemini experiments used `gemini-3.5-flash` because the project's default
-model, `gemini-3.8-flash`, returned 503 (overloaded) and then 429 (quota) that
-day.
+The Gemini experiments used `gemini-3.5-flash` because `gemini-3.8-flash`
+returned 503 (overloaded) and then 429 (quota) that day. On 2026-11-26 it was
+still overloaded, so `gemini-3.5-flash` became the project's main model
+(`GEMINI_MODEL` in `backend/gemini_client.py`). Because Gemini models are
+often overloaded, the server falls back to `gemini-3.1-flash-lite`
+(`GEMINI_FALLBACK_MODELS`) when the main model returns 500/502/503/504; the
+server log shows when the fallback was used. The evaluation disables the
+fallback, so each experiment measures only the model it names.
 
 ## LangSmith Traces
 
@@ -275,7 +291,7 @@ with `& "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"`.
 collection: order, no duplicates, forward-only scrolling and scroll
 restoration (about 3–4 minutes).
 
-Latest run (2026-11-25): 16/16 backend, 28/28 extension unit and 6/6
+Latest run (2026-11-26): 21/21 backend; (2026-11-25) 28/28 extension unit and 6/6
 real-browser tests passed. Unit tests use a fake Gemini client and synthetic
 pages.
 
@@ -285,11 +301,14 @@ Verified: the backend over real HTTP with a real Gemini analysis
 (`gemini-3.5-flash`) of a synthetic conversation (send → review → restore →
 approve → saved); the full HTTP flow with a fake Gemini client; the LangSmith
 datasets and experiments above; ChatGPT collection on the live site; ChatGPT
-full collection on the synthetic test page.
+full collection on the synthetic test page; the installed extension in Chrome
+on a real ChatGPT conversation: collection → send → Gemini analysis (with the
+fallback model available) → review shown in the popup (screenshots above); the
+Gemini fallback against the real API (main model returned 503, the backup
+completed the analysis); collection on a live Claude conversation (4 messages).
 
-Not yet verified: ChatGPT full collection on a real long conversation;
-collection from live Claude and Gemini conversations; the complete flow from
-the installed extension in the browser; analysis with the default model
-`gemini-3.8-flash`. The approved project is stored but not yet read back by
-any endpoint. Extension-specific notes are in
+Not yet verified: approving and saving from the browser (the backend part is
+verified over HTTP); ChatGPT full collection on a real long conversation;
+whether the Claude collection was complete; collection on the live Gemini site.
+The approved project is stored but not yet read back by any endpoint. Extension-specific notes are in
 [extension/README.md](extension/README.md).
